@@ -14,7 +14,6 @@ import sgtk
 # the edit is in.
 SequenceEdit = namedtuple("SequenceEdit", ["sequence", "track", "section"])
 
-
 HookBaseClass = sgtk.get_hook_baseclass()
 
 
@@ -171,17 +170,28 @@ class UnrealSessionCollector(HookBaseClass):
         sequence_edits = None
         # Iterate through the selected assets and get their info and add them as items to be published
         for asset in unreal_sg.selected_assets:
-            if asset.asset_class == "LevelSequence":
+            try:
+                asset_class = asset.asset_class_path.asset_name
+            except AttributeError:
+                asset_class = asset.asset_class
+
+            if asset_class == "LevelSequence":
                 if sequence_edits is None:
-                    sequence_edits = self.retrieve_sequence_edits()
+                    pkg_name = getattr(asset, "package_name", None)
+                    sequence_edits = self.retrieve_sequence_edits(package_name=pkg_name)
                 self.collect_level_sequence(parent_item, asset, sequence_edits)
             else:
+                try:
+                    asset_name = asset.package_name
+                except AttributeError:
+                    asset_name = asset.object_path
+
                 self.create_asset_item(
                     parent_item,
                     # :class:`Name` instances, we cast them to strings otherwise
-                    # string operations fail down the line..
-                    "%s" % asset.object_path,
-                    "%s" % asset.asset_class,
+                    # string operations fail down the line.
+                    "%s" % asset_name,
+                    "%s" % asset_class,
                     "%s" % asset.asset_name,
                 )
 
@@ -235,9 +245,9 @@ class UnrealSessionCollector(HookBaseClass):
                 # Get paths from the parent and prepend the current sequence
                 # to them.
                 for edit_path in self.get_all_paths_from_sequence(
-                    edit.sequence,
-                    sequence_edits,
-                    copy.copy(visited),  # Each visit needs its own stack
+                        edit.sequence,
+                        sequence_edits,
+                        copy.copy(visited),  # Each visit needs its own stack
                 ):
                     self.logger.info("Got %s from %s" % (edit_path, edit.sequence.get_name()))
                     all_paths.append([level_sequence] + edit_path)
@@ -275,33 +285,34 @@ class UnrealSessionCollector(HookBaseClass):
             # publishing.
             item.properties["edits_path"] = edits_path
 
-    def retrieve_sequence_edits(self):
-        """
-        Build a dictionary for all Level Sequences where keys are Level Sequences
-        and values the list of edits they are in.
 
-        :returns: A dictionary of :class:`unreal.LevelSequence` where values are
-                  lists of :class:`SequenceEdit`.
-        """
-        sequence_edits = defaultdict(list)
+def retrieve_sequence_edits(self, package_name=None):
+    """
+    Build a dictionary for all Level Sequences where keys are Level Sequences
+    and values the list of edits they are in.
 
-        asset_helper = unreal.AssetRegistryHelpers.get_asset_registry()
-        # Retrieve all Level Sequence assets
-        all_level_sequences = asset_helper.get_assets_by_class("LevelSequence")
-        for lvseq_asset in all_level_sequences:
-            lvseq = unreal.load_asset(lvseq_asset.object_path, unreal.LevelSequence)
-            # Check shots
-            for track in lvseq.find_master_tracks_by_type(unreal.MovieSceneCinematicShotTrack):
-                for section in track.get_sections():
-                    # Not sure if you can have anything else than a MovieSceneSubSection
-                    # in a MovieSceneCinematicShotTrack, but let's be cautious here.
-                    try:
-                        # Get the Sequence attached to the section and check if
-                        # it is the one we're looking for.
-                        section_seq = section.get_sequence()
-                        sequence_edits[section_seq].append(
-                            SequenceEdit(lvseq, track, section)
-                        )
-                    except AttributeError:
-                        pass
-        return sequence_edits
+    :returns: A dictionary of :class:`unreal.LevelSequence` where values are
+              lists of :class:`SequenceEdit`.
+    """
+    sequence_edits = defaultdict(list)
+
+    asset_helper = unreal.AssetRegistryHelpers.get_asset_registry()
+    # Retrieve all Level Sequence assets
+    all_level_sequences = asset_helper.get_assets_by_class("LevelSequence")
+    for lvseq_asset in all_level_sequences:
+        lvseq = unreal.load_asset(lvseq_asset.object_path, unreal.LevelSequence)
+        # Check shots
+        for track in lvseq.find_master_tracks_by_type(unreal.MovieSceneCinematicShotTrack):
+            for section in track.get_sections():
+                # Not sure if you can have anything else than a MovieSceneSubSection
+                # in a MovieSceneCinematicShotTrack, but let's be cautious here.
+                try:
+                    # Get the Sequence attached to the section and check if
+                    # it is the one we're looking for.
+                    section_seq = section.get_sequence()
+                    sequence_edits[section_seq].append(
+                        SequenceEdit(lvseq, track, section)
+                    )
+                except AttributeError:
+                    pass
+    return sequence_edits
